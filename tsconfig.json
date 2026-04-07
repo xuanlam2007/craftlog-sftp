@@ -1,9 +1,10 @@
 {
   "compilerOptions": {
+    "types": ["node"],
     "lib": [
       "dom",
       "dom.iterable",
-      "esnext"
+      "ES2020"
     ],
     "allowJs": true,
     "target": "ES6",
