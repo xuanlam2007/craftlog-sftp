@@ -36,18 +36,15 @@ export async function GET(request: NextRequest) {
   } catch (error: unknown) {
     if (error && typeof error === 'object' && 'code' in error) {
       const errCode = (error as { code: number }).code
-      if (errCode === 404 || errCode === 401) {
+      if (errCode === 404 || errCode === 401 || errCode === 400) {
         return NextResponse.json({ 
           files: [], 
           total: 0,
-          setupRequired: errCode === 401,
+          setupRequired: true,
         })
       }
     }
     console.error('Failed to fetch changed files:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch changed files' },
-      { status: 500 }
-    )
+    return NextResponse.json({ files: [], total: 0 })
   }
 }

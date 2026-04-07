@@ -19,11 +19,11 @@ interface LogsTableProps {
 export function LogsTable({ logs }: LogsTableProps) {
   const getChangeTypeBadge = (type: ChangeLog['change_type']) => {
     switch (type) {
-      case 'upload':
-        return <Badge className="bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25">Uploaded</Badge>
-      case 'edit':
-        return <Badge className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/25">Edited</Badge>
-      case 'delete':
+      case 'added':
+        return <Badge className="bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25">Added</Badge>
+      case 'modified':
+        return <Badge className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/25">Modified</Badge>
+      case 'deleted':
         return <Badge className="bg-red-500/15 text-red-600 hover:bg-red-500/25">Deleted</Badge>
       default:
         return <Badge variant="secondary">{type}</Badge>

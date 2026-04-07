@@ -48,7 +48,7 @@ export interface ChangeLog {
   $id?: string
   account_id: string // Link to SFTP account
   file_path: string
-  change_type: 'upload' | 'edit' | 'delete'
+  change_type: 'added' | 'modified' | 'deleted'
   detected_at: string
   old_size?: number
   new_size?: number

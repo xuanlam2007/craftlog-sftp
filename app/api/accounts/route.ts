@@ -73,12 +73,14 @@ export async function POST(request: NextRequest) {
       {
         name,
         owner_id: user.$id,
+        owner_email: user.email,
         sftp_host,
         sftp_port: sftp_port || 22,
         sftp_username,
         sftp_password,
         base_path,
-        ignored_folders: ignored_folders || ''
+        ignored_folders: ignored_folders || '',
+        created_at: new Date().toISOString()
       }
     )
 

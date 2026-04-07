@@ -9,7 +9,7 @@ import { FieldGroup, Field, FieldLabel } from '@/components/ui/field'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Loader2, Save, TestTube, Server } from 'lucide-react'
+import { Loader2, Save, TestTube, Server, RotateCcw } from 'lucide-react'
 import Link from 'next/link'
 
 interface Settings {
@@ -35,8 +35,10 @@ export default function SettingsPage() {
   })
   const [isSaving, setIsSaving] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
+  const [isResetting, setIsResetting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [resetResult, setResetResult] = useState<{ success: boolean; message: string } | null>(null)
 
   // Load current account settings
   useEffect(() => {
@@ -90,6 +92,25 @@ export default function SettingsPage() {
       setTestResult({ success: false, message: 'Connection test failed' })
     } finally {
       setIsTesting(false)
+    }
+  }
+
+  const handleReset = async () => {
+    if (!currentAccount?.$id) return
+    if (!confirm('This will clear all change logs and reset the baseline. Are you sure?')) return
+    
+    setIsResetting(true)
+    setResetResult(null)
+    try {
+      const response = await fetch(`/api/accounts/${currentAccount.$id}/reset`, {
+        method: 'POST',
+      })
+      const result = await response.json()
+      setResetResult({ success: result.success, message: result.message })
+    } catch (err) {
+      setResetResult({ success: false, message: 'Reset failed' })
+    } finally {
+      setIsResetting(false)
     }
   }
 
@@ -249,6 +270,36 @@ export default function SettingsPage() {
             {saveResult && (
               <Badge variant={saveResult.success ? 'default' : 'destructive'}>
                 {saveResult.message}
+              </Badge>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Reset Monitoring</CardTitle>
+          <CardDescription>
+            Clear all change logs and establish a new baseline
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-4">
+            This will delete all recorded changes and file records for this account. 
+            The next scan will establish a new baseline, and only changes after that will be tracked.
+          </p>
+          <div className="flex items-center gap-3">
+            <Button onClick={handleReset} variant="destructive" disabled={isResetting}>
+              {isResetting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="mr-2 h-4 w-4" />
+              )}
+              Reset & Clear Logs
+            </Button>
+            {resetResult && (
+              <Badge variant={resetResult.success ? 'default' : 'destructive'}>
+                {resetResult.message}
               </Badge>
             )}
           </div>

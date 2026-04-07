@@ -39,18 +39,16 @@ export async function GET(request: NextRequest) {
   } catch (error: unknown) {
     if (error && typeof error === 'object' && 'code' in error) {
       const errCode = (error as { code: number }).code
-      if (errCode === 404 || errCode === 401) {
+      // Handle missing collection, unauthorized, or schema errors gracefully
+      if (errCode === 404 || errCode === 401 || errCode === 400) {
         return NextResponse.json({ 
           logs: [], 
           total: 0,
-          setupRequired: errCode === 401,
+          setupRequired: true,
         })
       }
     }
     console.error('Failed to fetch logs:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch logs' },
-      { status: 500 }
-    )
+    return NextResponse.json({ logs: [], total: 0 })
   }
 }

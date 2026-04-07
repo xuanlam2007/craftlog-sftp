@@ -3,11 +3,34 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { Client, Account, ID, Models, OAuthProvider } from 'appwrite'
 
-const client = new Client()
-  .setEndpoint(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
-  .setProject(process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+// Singleton pattern to ensure client is properly initialized
+let client: Client | null = null
+let account: Account | null = null
 
-const account = new Account(client)
+function getClient(): Client | null {
+  if (!client) {
+    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT
+    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID
+    
+    if (!endpoint || !projectId) {
+      return null
+    }
+    
+    client = new Client()
+    client.setEndpoint(endpoint)
+    client.setProject(projectId)
+  }
+  return client
+}
+
+function getAccount(): Account | null {
+  const c = getClient()
+  if (!c) return null
+  if (!account) {
+    account = new Account(c)
+  }
+  return account
+}
 
 interface AuthContextType {
   user: Models.User<Models.Preferences> | null
@@ -45,7 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkUser = async () => {
     try {
-      const currentUser = await account.get()
+      const acc = getAccount()
+      if (!acc) {
+        setUser(null)
+        setUserCookie(null)
+        setIsLoading(false)
+        return
+      }
+      const currentUser = await acc.get()
       setUser(currentUser)
       setUserCookie(currentUser)
     } catch {
@@ -57,25 +87,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const login = async (email: string, password: string) => {
-    await account.createEmailPasswordSession(email, password)
-    const currentUser = await account.get()
+    const acc = getAccount()
+    if (!acc) throw new Error('Appwrite not configured')
+    await acc.createEmailPasswordSession(email, password)
+    const currentUser = await acc.get()
     setUser(currentUser)
     setUserCookie(currentUser)
   }
 
   const loginWithGoogle = () => {
-    const successUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : '/'
-    const failureUrl = typeof window !== 'undefined' ? `${window.location.origin}/login` : '/login'
-    account.createOAuth2Session(OAuthProvider.Google, successUrl, failureUrl)
+    const acc = getAccount()
+    if (!acc) {
+      console.error('Appwrite not configured - missing NEXT_PUBLIC_APPWRITE_ENDPOINT or NEXT_PUBLIC_APPWRITE_PROJECT_ID')
+      return
+    }
+    const successUrl = `${window.location.origin}/`
+    const failureUrl = `${window.location.origin}/login`
+    acc.createOAuth2Session(OAuthProvider.Google, successUrl, failureUrl)
   }
 
   const register = async (email: string, password: string, name: string) => {
-    await account.create(ID.unique(), email, password, name)
+    const acc = getAccount()
+    if (!acc) throw new Error('Appwrite not configured')
+    await acc.create(ID.unique(), email, password, name)
     await login(email, password)
   }
 
   const logout = async () => {
-    await account.deleteSession('current')
+    const acc = getAccount()
+    if (!acc) return
+    await acc.deleteSession('current')
     setUserCookie(null)
     setUser(null)
   }

@@ -4,15 +4,41 @@ import { databases, ID, Query, DATABASE_ID, COLLECTIONS } from '@/lib/appwrite-s
 
 interface FileInfo {
   path: string
-  filename: string
   size: number
-  mtime: string
+  mtime: number
 }
 
 interface ChangeDetected {
-  changeType: 'upload' | 'edit' | 'delete'
-  filename: string
+  changeType: 'added' | 'modified' | 'deleted'
   path: string
+  oldSize?: number
+  newSize?: number
+}
+
+// In-memory baseline storage per account (shared across all users viewing same account)
+const accountBaselines = new Map<string, {
+  files: Map<string, FileInfo>
+  lastScan: number
+}>()
+
+// Global rate limiting: track requests per second
+let requestsThisSecond = 0
+let currentSecond = Math.floor(Date.now() / 1000)
+const MAX_REQUESTS_PER_SECOND = 3
+
+function checkRateLimit(): boolean {
+  const now = Math.floor(Date.now() / 1000)
+  if (now !== currentSecond) {
+    currentSecond = now
+    requestsThisSecond = 0
+  }
+  
+  if (requestsThisSecond >= MAX_REQUESTS_PER_SECOND) {
+    return false // Rate limited
+  }
+  
+  requestsThisSecond++
+  return true
 }
 
 async function getAccountSettings(accountId: string) {
@@ -28,20 +54,16 @@ async function getAccountSettings(accountId: string) {
   }
 }
 
-// Check if a path matches an ignore pattern (supports wildcards like world*)
 function matchesIgnorePattern(pathPart: string, pattern: string): boolean {
-  // Handle wildcard patterns
   if (pattern.endsWith('*')) {
     const prefix = pattern.slice(0, -1)
     return pathPart.toLowerCase().startsWith(prefix.toLowerCase())
   }
-  // Exact match (case-insensitive)
   return pathPart.toLowerCase() === pattern.toLowerCase()
 }
 
 function shouldIgnorePath(fullPath: string, ignoredPatterns: string[]): boolean {
   const pathParts = fullPath.split('/').filter(Boolean)
-  
   for (const pattern of ignoredPatterns) {
     for (const part of pathParts) {
       if (matchesIgnorePattern(part, pattern)) {
@@ -61,7 +83,6 @@ async function scanDirectory(
 ): Promise<void> {
   const fullPath = currentPath || basePath
 
-  // Check if current path should be ignored
   if (shouldIgnorePath(fullPath, ignoredPatterns)) {
     return
   }
@@ -75,295 +96,230 @@ async function scanDirectory(
       if (item.type === 'd') {
         await scanDirectory(sftp, basePath, itemPath, ignoredPatterns, files)
       } else if (item.type === '-') {
-        const ext = item.name.split('.').pop()?.toLowerCase()
-        if (ext === 'jar' && item.size > 10 * 1024 * 1024) {
-          continue
-        }
-
         files.push({
           path: itemPath,
-          filename: item.name,
           size: item.size,
-          mtime: new Date(item.modifyTime).toISOString(),
+          mtime: item.modifyTime,
         })
       }
     }
-  } catch (error) {
-    console.error(`Failed to scan directory ${fullPath}:`, error)
-  }
-}
-
-async function getLatestSnapshot(accountId: string) {
-  try {
-    const response = await databases.listDocuments(
-      DATABASE_ID,
-      COLLECTIONS.SNAPSHOTS,
-      [
-        Query.equal('account_id', accountId),
-        Query.orderDesc('$createdAt'),
-        Query.limit(1)
-      ]
-    )
-    return response.documents[0] || null
   } catch {
-    return null
+    // Skip directories we can't access
   }
 }
 
-async function getSnapshotFiles(snapshotId: string, accountId: string) {
-  const files: Map<string, FileInfo> = new Map()
-  let offset = 0
-  const limit = 100
-
-  try {
-    while (true) {
-      const response = await databases.listDocuments(
-        DATABASE_ID,
-        COLLECTIONS.FILE_RECORDS,
-        [
-          Query.equal('snapshot_id', snapshotId),
-          Query.equal('account_id', accountId),
-          Query.limit(limit),
-          Query.offset(offset),
-        ]
-      )
-
-      for (const doc of response.documents) {
-        files.set(doc.path, {
-          path: doc.path,
-          filename: doc.path.split('/').pop() || doc.path,
-          size: doc.size,
-          mtime: doc.modified_time,
-        })
-      }
-
-      if (response.documents.length < limit) {
-        break
-      }
-      offset += limit
-    }
-  } catch {
-    // Collection might not exist
-  }
-
-  return files
-}
-
-function detectChanges(
-  oldFiles: Map<string, FileInfo>,
-  newFiles: FileInfo[]
-): ChangeDetected[] {
+function detectChanges(baseline: Map<string, FileInfo>, currentFiles: FileInfo[]): ChangeDetected[] {
   const changes: ChangeDetected[] = []
-  const newFilesMap = new Map<string, FileInfo>()
+  const currentMap = new Map<string, FileInfo>()
 
-  for (const file of newFiles) {
-    newFilesMap.set(file.path, file)
+  for (const file of currentFiles) {
+    currentMap.set(file.path, file)
+    const oldFile = baseline.get(file.path)
 
-    const oldFile = oldFiles.get(file.path)
     if (!oldFile) {
-      changes.push({
-        changeType: 'upload',
-        filename: file.filename,
-        path: file.path,
-      })
+      changes.push({ changeType: 'added', path: file.path, newSize: file.size })
     } else if (oldFile.size !== file.size || oldFile.mtime !== file.mtime) {
-      changes.push({
-        changeType: 'edit',
-        filename: file.filename,
-        path: file.path,
-      })
+      changes.push({ changeType: 'modified', path: file.path, oldSize: oldFile.size, newSize: file.size })
     }
   }
 
-  for (const [path, file] of oldFiles) {
-    if (!newFilesMap.has(path)) {
-      changes.push({
-        changeType: 'delete',
-        filename: file.filename,
-        path: file.path,
-      })
+  // Check for deleted files
+  for (const [path, oldFile] of baseline) {
+    if (!currentMap.has(path)) {
+      changes.push({ changeType: 'deleted', path, oldSize: oldFile.size })
     }
   }
 
   return changes
 }
 
-async function updateChangedFilesRegistry(accountId: string, changes: ChangeDetected[]) {
+async function logChangesToDatabase(accountId: string, changes: ChangeDetected[]) {
   const now = new Date().toISOString()
 
-  for (const change of changes) {
-    try {
-      const existing = await databases.listDocuments(
-        DATABASE_ID,
-        COLLECTIONS.CHANGED_FILES,
-        [
-          Query.equal('account_id', accountId),
-          Query.equal('file_path', change.path),
-          Query.limit(1)
-        ]
-      )
+  // Limit batch size
+  const changesToLog = changes.slice(0, 20)
 
-      if (existing.documents.length > 0) {
-        const doc = existing.documents[0]
-        await databases.updateDocument(
-          DATABASE_ID,
-          COLLECTIONS.CHANGED_FILES,
-          doc.$id,
-          {
-            last_detected: now,
-            change_count: (doc.change_count || 0) + 1,
-          }
-        )
-      } else {
-        await databases.createDocument(
-          DATABASE_ID,
-          COLLECTIONS.CHANGED_FILES,
-          ID.unique(),
-          {
-            account_id: accountId,
-            file_path: change.path,
-            first_detected: now,
-            last_detected: now,
-            change_count: 1,
-          }
-        )
-      }
+  for (const change of changesToLog) {
+    try {
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.CHANGE_LOGS,
+        ID.unique(),
+        {
+          account_id: accountId,
+          file_path: change.path,
+          change_type: change.changeType,
+          detected_at: now,
+          old_size: change.oldSize ?? null,
+          new_size: change.newSize ?? null,
+        }
+      )
     } catch (error) {
-      console.error(`Failed to update changed files registry for ${change.path}:`, error)
+      console.error(`Failed to log change for ${change.path}:`, error)
     }
   }
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limit check FIRST
+  if (!checkRateLimit()) {
+    return NextResponse.json({
+      success: true,
+      message: 'Rate limited',
+      rateLimited: true,
+      changesDetected: 0,
+    })
+  }
+
   const sftp = new Client()
 
   try {
     const body = await request.json()
-    const { account_id } = body
+    const { account_id, action } = body
 
     if (!account_id) {
       return NextResponse.json(
-        { success: false, message: 'No account selected. Please select an SFTP account first.' },
+        { success: false, message: 'account_id is required' },
         { status: 400 }
       )
     }
 
-    // Get account settings
+    const existingBaseline = accountBaselines.get(account_id)
+
+    // INITIALIZE: Just mark the current timestamp as baseline - INSTANT, no scanning
+    if (action === 'initialize') {
+      // If baseline already exists, just return it
+      if (existingBaseline) {
+        return NextResponse.json({
+          success: true,
+          message: `Monitoring active.`,
+          totalFiles: existingBaseline.files.size,
+          changesDetected: 0,
+        })
+      }
+
+      // Test connection only - don't scan all files
+      const account = await getAccountSettings(account_id)
+      if (!account) {
+        return NextResponse.json({ success: false, message: 'Account not found.' }, { status: 404 })
+      }
+
+      try {
+        await sftp.connect({
+          host: account.sftp_host,
+          port: account.sftp_port || 22,
+          username: account.sftp_username,
+          password: account.sftp_password,
+          readyTimeout: 10000,
+        })
+        await sftp.end()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Connection failed'
+        return NextResponse.json({ success: false, message: msg }, { status: 500 })
+      }
+
+      // Create EMPTY baseline - files will be added on first scan
+      accountBaselines.set(account_id, {
+        files: new Map(),
+        lastScan: Date.now(),
+      })
+
+      return NextResponse.json({
+        success: true,
+        message: `Monitoring started. Watching for changes.`,
+        totalFiles: 0,
+        changesDetected: 0,
+      })
+    }
+
+    // SCAN: Check for changes since baseline
+    if (!existingBaseline) {
+      return NextResponse.json({
+        success: false,
+        message: 'No baseline',
+        needsInitialize: true,
+      })
+    }
+
+    // Don't scan too frequently - minimum 25 seconds between scans
+    const timeSinceLastScan = Date.now() - existingBaseline.lastScan
+    if (timeSinceLastScan < 25000) {
+      return NextResponse.json({
+        success: true,
+        message: 'Waiting...',
+        changesDetected: 0,
+        totalFiles: existingBaseline.files.size,
+      })
+    }
+
     const account = await getAccountSettings(account_id)
     if (!account) {
-      return NextResponse.json(
-        { success: false, message: 'SFTP account not found.' },
-        { status: 400 }
-      )
+      return NextResponse.json({ success: false, message: 'Account not found.' }, { status: 404 })
     }
 
-    const host = account.sftp_host
-    const port = account.sftp_port
-    const username = account.sftp_username
-    const password = account.sftp_password
-    const basePath = account.base_path
-    const ignoredFolders = account.ignored_folders ? account.ignored_folders.split(',').map((s: string) => s.trim()) : []
-
-    // Connect to SFTP
     await sftp.connect({
-      host,
-      port: port || 22,
-      username,
-      password,
+      host: account.sftp_host,
+      port: account.sftp_port || 22,
+      username: account.sftp_username,
+      password: account.sftp_password,
       readyTimeout: 30000,
     })
 
-    // Scan all files
-    const files: FileInfo[] = []
-    await scanDirectory(sftp, basePath, '', ignoredFolders, files)
+    const ignoredPatterns = account.ignored_folders
+      ? account.ignored_folders.split(',').map((s: string) => s.trim())
+      : []
 
+    const currentFiles: FileInfo[] = []
+    await scanDirectory(sftp, account.base_path || '/', '', ignoredPatterns, currentFiles)
     await sftp.end()
 
-    // Get previous snapshot for this account
-    const previousSnapshot = await getLatestSnapshot(account_id)
-    const isBaseline = !previousSnapshot
+    // First scan after initialize - just set baseline, don't report changes
+    const isFirstScan = existingBaseline.files.size === 0
+    
+    // Detect changes (only if not first scan)
+    const changes = isFirstScan ? [] : detectChanges(existingBaseline.files, currentFiles)
 
-    // Create new snapshot
-    const snapshot = await databases.createDocument(
-      DATABASE_ID,
-      COLLECTIONS.SNAPSHOTS,
-      ID.unique(),
-      {
-        account_id: account_id,
-        createdAt: new Date().toISOString(),
-        totalFiles: files.length,
-        isBaseline,
-      }
-    )
-
-    // Store file records
-    for (const file of files) {
-      try {
-        await databases.createDocument(
-          DATABASE_ID,
-          COLLECTIONS.FILE_RECORDS,
-          ID.unique(),
-          {
-            account_id: account_id,
-            snapshot_id: snapshot.$id,
-            path: file.path,
-            size: file.size,
-            modified_time: file.mtime,
-          }
-        )
-      } catch (error) {
-        console.error(`Failed to store file record for ${file.path}:`, error)
-      }
+    // Update baseline
+    const filesMap = new Map<string, FileInfo>()
+    for (const file of currentFiles) {
+      filesMap.set(file.path, file)
     }
+    accountBaselines.set(account_id, {
+      files: filesMap,
+      lastScan: Date.now(),
+    })
 
-    // If not baseline, detect and log changes
-    let changesDetected = 0
-    if (!isBaseline && previousSnapshot) {
-      const oldFiles = await getSnapshotFiles(previousSnapshot.$id, account_id)
-      const changes = detectChanges(oldFiles, files)
-      changesDetected = changes.length
-
-      const now = new Date().toISOString()
-      for (const change of changes) {
-        try {
-          await databases.createDocument(
-            DATABASE_ID,
-            COLLECTIONS.CHANGE_LOGS,
-            ID.unique(),
-            {
-              account_id: account_id,
-              file_path: change.path,
-              change_type: change.changeType,
-              detected_at: now,
-            }
-          )
-        } catch (error) {
-          console.error(`Failed to log change for ${change.path}:`, error)
-        }
-      }
-
-      await updateChangedFilesRegistry(account_id, changes)
+    // Log ONLY actual changes to database (not on first scan)
+    if (changes.length > 0) {
+      await logChangesToDatabase(account_id, changes)
     }
 
     return NextResponse.json({
       success: true,
-      message: isBaseline
-        ? `Baseline snapshot created with ${files.length} files`
-        : `Scan complete. ${changesDetected} changes detected.`,
-      snapshotId: snapshot.$id,
-      isBaseline,
-      changesDetected,
-      totalFiles: files.length,
+      message: isFirstScan 
+        ? `Baseline ready. Watching ${currentFiles.length} files.`
+        : (changes.length > 0 ? `${changes.length} change(s) detected` : 'No changes'),
+      totalFiles: currentFiles.length,
+      changesDetected: changes.length,
+      baselineReady: true,
     })
+
   } catch (error: unknown) {
     await sftp.end().catch(() => {})
-
-    const errorMessage = error instanceof Error ? error.message : 'Scan failed'
-    console.error('Scan failed:', errorMessage)
-
-    return NextResponse.json(
-      { success: false, message: `Scan failed: ${errorMessage}` },
-      { status: 500 }
-    )
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Scan failed:', message)
+    return NextResponse.json({ success: false, message: `Scan failed: ${message}` }, { status: 500 })
   }
 }
+
+// Cleanup old baselines every 30 minutes
+setInterval(() => {
+  const now = Date.now()
+  const maxAge = 60 * 60 * 1000 // 1 hour
+  
+  for (const [key, baseline] of accountBaselines) {
+    if (now - baseline.lastScan > maxAge) {
+      accountBaselines.delete(key)
+    }
+  }
+}, 30 * 60 * 1000)
