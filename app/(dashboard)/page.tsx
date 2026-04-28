@@ -118,7 +118,7 @@ export default function LogsPage() {
           </CardContent>
         </Card>
       ) : (
-        <LogsTable logs={filteredLogs} />
+        <LogsTable logs={filteredLogs} onLogDeleted={() => mutate()} />
       )}
     </div>
   )

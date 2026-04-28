@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { databases, Query, DATABASE_ID, COLLECTIONS, ID } from '@/lib/appwrite-server'
 
+// DELETE - Remove a log entry
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const logId = searchParams.get('id')
+
+    if (!logId) {
+      return NextResponse.json({ success: false, message: 'Missing log ID' }, { status: 400 })
+    }
+
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.CHANGE_LOGS, logId)
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Failed to delete log:', error)
+    return NextResponse.json({ success: false, message: 'Failed to delete log' }, { status: 500 })
+  }
+}
+
 // POST - Create a manual log entry
 export async function POST(request: NextRequest) {
   try {

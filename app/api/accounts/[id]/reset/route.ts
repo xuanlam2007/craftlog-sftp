@@ -1,58 +1,151 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { databases, Query, DATABASE_ID, COLLECTIONS } from '@/lib/appwrite-server'
+import { databases, DATABASE_ID, COLLECTIONS, Query } from '@/lib/appwrite-server'
+import { cookies } from 'next/headers'
 
-// Delete all documents matching a query in parallel batches
-async function deleteAllDocuments(collectionId: string, accountId: string) {
-  try {
-    let hasMore = true
-    while (hasMore) {
-      const response = await databases.listDocuments(
-        DATABASE_ID,
-        collectionId,
-        [Query.equal('account_id', accountId), Query.limit(100)]
-      )
+async function getCurrentUser() {
+  const cookieStore = await cookies()
+  const userIdCookie = cookieStore.get('appwrite-user-id')
+  const userEmailCookie = cookieStore.get('appwrite-user-email')
+  
+  if (!userIdCookie || !userEmailCookie) return null
 
-      // Delete all documents in parallel (much faster)
-      await Promise.all(
-        response.documents.map(doc => 
-          databases.deleteDocument(DATABASE_ID, collectionId, doc.$id).catch(() => {})
-        )
-      )
-
-      hasMore = response.documents.length === 100
-    }
-  } catch {
-    // Collection might not exist or have different schema - ignore
+  return {
+    $id: userIdCookie.value,
+    email: decodeURIComponent(userEmailCookie.value)
   }
 }
 
-export async function POST(
+async function checkAccess(accountId: string, userId: string): Promise<boolean> {
+  const memberships = await databases.listDocuments(
+    DATABASE_ID,
+    COLLECTIONS.ACCOUNT_MEMBERS,
+    [
+      Query.equal('account_id', accountId),
+      Query.equal('user_id', userId),
+      Query.limit(1)
+    ]
+  )
+  return memberships.documents.length > 0
+}
+
+async function isOwner(accountId: string, userId: string): Promise<boolean> {
+  const memberships = await databases.listDocuments(
+    DATABASE_ID,
+    COLLECTIONS.ACCOUNT_MEMBERS,
+    [
+      Query.equal('account_id', accountId),
+      Query.equal('user_id', userId),
+      Query.equal('role', 'owner'),
+      Query.limit(1)
+    ]
+  )
+  return memberships.documents.length > 0
+}
+
+// GET - Get single account
+export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: accountId } = await params
-
-    // Clear all data for this account (ignores errors for missing collections)
-    await deleteAllDocuments(COLLECTIONS.CHANGE_LOGS, accountId)
-    await deleteAllDocuments(COLLECTIONS.CHANGED_FILES, accountId)
-    
-    // FILE_RECORDS may not exist anymore since we use in-memory baselines
-    try {
-      await deleteAllDocuments(COLLECTIONS.FILE_RECORDS, accountId)
-    } catch {
-      // Ignore
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Logs cleared successfully.',
-    })
-  } catch (error) {
-    console.error('Reset failed:', error)
-    return NextResponse.json(
-      { success: false, message: 'Failed to reset account data' },
-      { status: 500 }
+    const { id } = await params
+    
+    if (!await checkAccess(id, user.$id)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const account = await databases.getDocument(
+      DATABASE_ID,
+      COLLECTIONS.SFTP_ACCOUNTS,
+      id
     )
+
+    return NextResponse.json({ account })
+  } catch (error) {
+    console.error('Failed to fetch account:', error)
+    return NextResponse.json({ error: 'Failed to fetch account' }, { status: 500 })
+  }
+}
+
+// PATCH - Update account (owner only)
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { id } = await params
+    
+    if (!await isOwner(id, user.$id)) {
+      return NextResponse.json({ error: 'Only owner can update account' }, { status: 403 })
+    }
+
+    const body = await request.json()
+    const allowedFields = ['name', 'sftp_host', 'sftp_port', 'sftp_username', 'sftp_password', 'base_path', 'ignored_folders']
+    const updateData: Record<string, unknown> = {}
+    
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        updateData[field] = body[field]
+      }
+    }
+
+    const account = await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTIONS.SFTP_ACCOUNTS,
+      id,
+      updateData
+    )
+
+    return NextResponse.json({ account })
+  } catch (error) {
+    console.error('Failed to update account:', error)
+    return NextResponse.json({ error: 'Failed to update account' }, { status: 500 })
+  }
+}
+
+// DELETE - Delete account (owner only)
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { id } = await params
+    
+    if (!await isOwner(id, user.$id)) {
+      return NextResponse.json({ error: 'Only owner can delete account' }, { status: 403 })
+    }
+
+    // Delete all members
+    const members = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.ACCOUNT_MEMBERS,
+      [Query.equal('account_id', id), Query.limit(100)]
+    )
+    for (const member of members.documents) {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.ACCOUNT_MEMBERS, member.$id)
+    }
+
+    // Delete the account
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.SFTP_ACCOUNTS, id)
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Failed to delete account:', error)
+    return NextResponse.json({ error: 'Failed to delete account' }, { status: 500 })
   }
 }

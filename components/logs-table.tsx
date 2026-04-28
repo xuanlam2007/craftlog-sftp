@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import {
   Table,
   TableBody,
@@ -10,13 +11,34 @@ import {
 } from '@/components/ui/table'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Trash2, Loader2 } from 'lucide-react'
 import type { ChangeLog } from '@/lib/types'
 
 interface LogsTableProps {
   logs: ChangeLog[]
+  onLogDeleted?: () => void
 }
 
-export function LogsTable({ logs }: LogsTableProps) {
+export function LogsTable({ logs, onLogDeleted }: LogsTableProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const handleDelete = async (logId: string) => {
+    if (!confirm('Are you sure you want to delete this log?')) return
+    
+    setDeletingId(logId)
+    try {
+      const response = await fetch(`/api/logs?id=${logId}`, { method: 'DELETE' })
+      if (response.ok) {
+        onLogDeleted?.()
+      }
+    } catch (error) {
+      console.error('Failed to delete log:', error)
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const getChangeTypeBadge = (type: ChangeLog['change_type']) => {
     switch (type) {
       case 'added':
@@ -74,6 +96,7 @@ export function LogsTable({ logs }: LogsTableProps) {
                 <TableHead>File Name</TableHead>
                 <TableHead className="hidden md:table-cell">Path</TableHead>
                 <TableHead className="w-[180px]">Detected At</TableHead>
+                <TableHead className="w-[60px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -86,6 +109,21 @@ export function LogsTable({ logs }: LogsTableProps) {
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {formatDate(log.detected_at)}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                      onClick={() => log.$id && handleDelete(log.$id)}
+                      disabled={deletingId === log.$id}
+                    >
+                      {deletingId === log.$id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
