@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { useSftp } from '@/lib/sftp-context'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -65,6 +66,7 @@ export default function AccountsPage() {
         base_path: formData.base_path,
         ignored_folders: formData.ignored_folders
       })
+      toast.success('Account created successfully')
       setIsCreateOpen(false)
       setFormData({
         name: '',
@@ -76,7 +78,9 @@ export default function AccountsPage() {
         ignored_folders: DEFAULT_IGNORED_FOLDERS
       })
     } catch (error) {
-      console.error('Failed to create account:', error)
+      toast.error('Failed to create account', {
+        description: error instanceof Error ? error.message : 'Please try again.',
+      })
     } finally {
       setIsCreating(false)
     }
@@ -88,9 +92,19 @@ export default function AccountsPage() {
     try {
       const res = await fetch(`/api/accounts/${account.$id}/members`)
       const data = await res.json()
+      if (!res.ok) {
+        toast.error('Failed to load members', {
+          description: data.message || 'Please try again.',
+        })
+        setSelectedAccountForMembers(null)
+        return
+      }
       setMembers(data.members || [])
     } catch (error) {
-      console.error('Failed to fetch members:', error)
+      toast.error('Failed to load members', {
+        description: 'An unexpected error occurred.',
+      })
+      setSelectedAccountForMembers(null)
     } finally {
       setLoadingMembers(false)
     }

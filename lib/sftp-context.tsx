@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { toast } from 'sonner'
 import { useAuth } from './auth-context'
 import type { SftpAccount } from './types'
 
@@ -137,17 +138,27 @@ export function SftpProvider({ children }: { children: ReactNode }) {
   }
 
   const deleteAccount = async (accountId: string) => {
-    const response = await fetch(`/api/accounts/${accountId}`, {
-      method: 'DELETE'
-    })
-    if (!response.ok) {
-      const result = await response.json()
-      throw new Error(result.error || 'Failed to delete account')
+    try {
+      const response = await fetch(`/api/accounts/${accountId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        const result = await response.json()
+        toast.error('Failed to delete account', {
+          description: result.error || 'Please try again.',
+        })
+        return
+      }
+      toast.success('Account deleted successfully')
+      if (currentAccount?.$id === accountId) {
+        setCurrentAccount(accounts.find(a => a.$id !== accountId) || null)
+      }
+      await refreshAccounts()
+    } catch (error) {
+      toast.error('Failed to delete account', {
+        description: 'An unexpected error occurred.',
+      })
     }
-    if (currentAccount?.$id === accountId) {
-      setCurrentAccount(accounts.find(a => a.$id !== accountId) || null)
-    }
-    await refreshAccounts()
   }
 
   return (

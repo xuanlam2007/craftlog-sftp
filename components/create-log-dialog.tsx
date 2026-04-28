@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -59,9 +60,17 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
       if (data.success) {
         setItems(data.items)
         setCurrentPath(path)
+      } else {
+        toast.error('Failed to load directory', {
+          description: data.message || 'Could not connect to SFTP server.',
+        })
+        setShowBrowser(false)
       }
     } catch {
-      // Silent fail
+      toast.error('Failed to load directory', {
+        description: 'An unexpected error occurred.',
+      })
+      setShowBrowser(false)
     } finally {
       setIsLoading(false)
     }
@@ -102,13 +111,21 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
       })
       
       if (response.ok) {
+        toast.success('Log created successfully')
         setFilePath('')
         setChangeType('modified')
         setOpen(false)
         onLogCreated()
+      } else {
+        const data = await response.json()
+        toast.error('Failed to create log', {
+          description: data.message || 'Please try again.',
+        })
       }
     } catch {
-      // Error handling
+      toast.error('Failed to create log', {
+        description: 'An unexpected error occurred.',
+      })
     } finally {
       setIsSubmitting(false)
     }
