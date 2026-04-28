@@ -56,4 +56,5 @@ export const COLLECTIONS = {
   SFTP_ACCOUNTS: 'sftp_accounts',
   ACCOUNT_MEMBERS: 'account_members',
   USER_PREFERENCES: 'user_preferences',
+  MONITORING_SESSIONS: 'monitoring_sessions',
 }

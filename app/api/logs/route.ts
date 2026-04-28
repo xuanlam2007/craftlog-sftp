@@ -1,5 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { databases, Query, DATABASE_ID, COLLECTIONS } from '@/lib/appwrite-server'
+import { databases, Query, DATABASE_ID, COLLECTIONS, ID } from '@/lib/appwrite-server'
+
+// POST - Create a manual log entry
+export async function POST(request: NextRequest) {
+  try {
+    const { account_id, file_path, change_type } = await request.json()
+
+    if (!account_id || !file_path || !change_type) {
+      return NextResponse.json({ success: false, message: 'Missing required fields' }, { status: 400 })
+    }
+
+    await databases.createDocument(DATABASE_ID, COLLECTIONS.CHANGE_LOGS, ID.unique(), {
+      account_id,
+      file_path,
+      change_type,
+      detected_at: new Date().toISOString(),
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Failed to create log:', error)
+    return NextResponse.json({ success: false, message: 'Failed to create log' }, { status: 500 })
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
