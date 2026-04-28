@@ -211,6 +211,7 @@ export function LogsTable({ logs, onLogDeleted }: LogsTableProps) {
                   <TableHead className="w-[100px]">Type</TableHead>
                   <TableHead>File Name</TableHead>
                   <TableHead className="hidden md:table-cell">Path</TableHead>
+                  <TableHead className="hidden lg:table-cell">Notes</TableHead>
                   <TableHead className="w-[180px]">Detected At</TableHead>
                   <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
@@ -229,6 +230,9 @@ export function LogsTable({ logs, onLogDeleted }: LogsTableProps) {
                     <TableCell className="font-medium">{getFilename(log.file_path)}</TableCell>
                     <TableCell className="hidden max-w-[300px] truncate text-muted-foreground md:table-cell">
                       {log.file_path}
+                    </TableCell>
+                    <TableCell className="hidden max-w-[200px] truncate text-muted-foreground lg:table-cell">
+                      {log.notes || '-'}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatDate(log.detected_at)}

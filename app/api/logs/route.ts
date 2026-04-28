@@ -23,18 +23,25 @@ export async function DELETE(request: NextRequest) {
 // POST - Create a manual log entry
 export async function POST(request: NextRequest) {
   try {
-    const { account_id, file_path, change_type } = await request.json()
+    const { account_id, file_path, change_type, notes } = await request.json()
 
     if (!account_id || !file_path || !change_type) {
       return NextResponse.json({ success: false, message: 'Missing required fields' }, { status: 400 })
     }
 
-    await databases.createDocument(DATABASE_ID, COLLECTIONS.CHANGE_LOGS, ID.unique(), {
+    const docData: Record<string, unknown> = {
       account_id,
       file_path,
       change_type,
       detected_at: new Date().toISOString(),
-    })
+    }
+    
+    // Only add notes if provided (max 500 chars)
+    if (notes && typeof notes === 'string') {
+      docData.notes = notes.slice(0, 500)
+    }
+
+    await databases.createDocument(DATABASE_ID, COLLECTIONS.CHANGE_LOGS, ID.unique(), docData)
 
     return NextResponse.json({ success: true })
   } catch (error) {
@@ -68,10 +75,7 @@ export async function GET(request: NextRequest) {
       file_path: doc.file_path,
       change_type: doc.change_type,
       detected_at: doc.detected_at,
-      old_size: doc.old_size,
-      new_size: doc.new_size,
-      old_modified: doc.old_modified,
-      new_modified: doc.new_modified,
+      notes: doc.notes,
     }))
 
     return NextResponse.json({

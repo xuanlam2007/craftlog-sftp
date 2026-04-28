@@ -135,6 +135,10 @@ export function SftpProvider({ children }: { children: ReactNode }) {
       throw new Error(result.error || 'Failed to update account')
     }
     await refreshAccounts()
+    // Update currentAccount if it was the one being updated
+    if (currentAccount?.$id === accountId) {
+      setCurrentAccount(prev => prev ? { ...prev, ...data } : null)
+    }
   }
 
   const deleteAccount = async (accountId: string) => {

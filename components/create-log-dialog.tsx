@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -39,7 +40,10 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
   const [open, setOpen] = useState(false)
   const [filePath, setFilePath] = useState('')
   const [changeType, setChangeType] = useState<'added' | 'modified' | 'deleted' | 'translation'>('modified')
+  const [notes, setNotes] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  
+  const MAX_NOTES_LENGTH = 500
   
   // File browser state
   const [currentPath, setCurrentPath] = useState('/')
@@ -107,6 +111,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
           account_id: accountId,
           file_path: filePath,
           change_type: changeType,
+          notes: notes.trim() || undefined,
         })
       })
       
@@ -114,6 +119,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
         toast.success('Log created successfully')
         setFilePath('')
         setChangeType('modified')
+        setNotes('')
         setOpen(false)
         onLogCreated()
       } else {
@@ -249,6 +255,24 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
                 <SelectItem value="translation">Translation</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="notes">Notes (optional)</Label>
+              <span className="text-xs text-muted-foreground">
+                {notes.length}/{MAX_NOTES_LENGTH}
+              </span>
+            </div>
+            <Textarea
+              id="notes"
+              placeholder="Add a note about this change..."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value.slice(0, MAX_NOTES_LENGTH))}
+              rows={3}
+              className="resize-none"
+            />
           </div>
 
           {/* Submit Button */}

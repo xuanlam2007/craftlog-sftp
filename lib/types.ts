@@ -36,4 +36,5 @@ export interface ChangeLog {
   file_path: string
   change_type: 'added' | 'modified' | 'deleted' | 'translation'
   detected_at: string
+  notes?: string // Optional note, max 500 characters
 }
