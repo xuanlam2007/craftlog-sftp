@@ -34,6 +34,6 @@ export interface ChangeLog {
   $id?: string
   account_id: string
   file_path: string
-  change_type: 'added' | 'modified' | 'deleted'
+  change_type: 'added' | 'modified' | 'deleted' | 'translation'
   detected_at: string
 }

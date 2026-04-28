@@ -133,6 +133,8 @@ export function LogsTable({ logs, onLogDeleted }: LogsTableProps) {
         return <Badge className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/25">Modified</Badge>
       case 'deleted':
         return <Badge className="bg-red-500/15 text-red-600 hover:bg-red-500/25">Deleted</Badge>
+      case 'translation':
+        return <Badge className="bg-blue-500/15 text-blue-600 hover:bg-blue-500/25">Translation</Badge>
       default:
         return <Badge variant="secondary">{type}</Badge>
     }

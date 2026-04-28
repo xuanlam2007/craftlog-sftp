@@ -38,7 +38,7 @@ interface CreateLogDialogProps {
 export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProps) {
   const [open, setOpen] = useState(false)
   const [filePath, setFilePath] = useState('')
-  const [changeType, setChangeType] = useState<'added' | 'modified' | 'deleted'>('modified')
+  const [changeType, setChangeType] = useState<'added' | 'modified' | 'deleted' | 'translation'>('modified')
   const [isSubmitting, setIsSubmitting] = useState(false)
   
   // File browser state
@@ -246,6 +246,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
                 <SelectItem value="added">Added (New File)</SelectItem>
                 <SelectItem value="modified">Modified (Edited)</SelectItem>
                 <SelectItem value="deleted">Deleted</SelectItem>
+                <SelectItem value="translation">Translation</SelectItem>
               </SelectContent>
             </Select>
           </div>
