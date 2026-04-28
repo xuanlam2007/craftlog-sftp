@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Client from 'ssh2-sftp-client'
-import { databases, ID, DATABASE_ID, COLLECTIONS, Query } from '@/lib/appwrite-server'
+import SftpWatcher from 'sftp-watcher'
+import { databases, ID, DATABASE_ID, COLLECTIONS } from '@/lib/appwrite-server'
 
-// Rate limiting: max 3 requests per second
+interface WatcherInstance {
+  watcher: typeof SftpWatcher.prototype
+  startedAt: number
+  accountId: string
+}
+
+// Active watchers per account
+const activeWatchers = new Map<string, WatcherInstance>()
+
+// Rate limiting
 let requestsThisSecond = 0
 let currentSecond = Math.floor(Date.now() / 1000)
 
@@ -17,54 +26,6 @@ function checkRateLimit(): boolean {
   return true
 }
 
-// Session stored in database (monitoring_sessions collection)
-// Fields: account_id, start_time, last_scan_time, logged_paths (JSON array)
-interface MonitoringSession {
-  $id: string
-  account_id: string
-  start_time: number
-  last_scan_time: number
-  logged_paths: string // JSON array of paths
-}
-
-async function getSession(accountId: string): Promise<MonitoringSession | null> {
-  try {
-    const response = await databases.listDocuments(DATABASE_ID, COLLECTIONS.MONITORING_SESSIONS, [
-      Query.equal('account_id', accountId),
-      Query.limit(1)
-    ])
-    return response.documents[0] as unknown as MonitoringSession || null
-  } catch {
-    return null
-  }
-}
-
-async function saveSession(accountId: string, startTime: number, lastScanTime: number, loggedPaths: string[]): Promise<void> {
-  const existing = await getSession(accountId)
-  
-  if (existing) {
-    await databases.updateDocument(DATABASE_ID, COLLECTIONS.MONITORING_SESSIONS, existing.$id, {
-      start_time: startTime,
-      last_scan_time: lastScanTime,
-      logged_paths: JSON.stringify(loggedPaths)
-    })
-  } else {
-    await databases.createDocument(DATABASE_ID, COLLECTIONS.MONITORING_SESSIONS, ID.unique(), {
-      account_id: accountId,
-      start_time: startTime,
-      last_scan_time: lastScanTime,
-      logged_paths: JSON.stringify(loggedPaths)
-    })
-  }
-}
-
-async function deleteSession(accountId: string): Promise<void> {
-  const existing = await getSession(accountId)
-  if (existing) {
-    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.MONITORING_SESSIONS, existing.$id)
-  }
-}
-
 async function getAccountSettings(accountId: string) {
   try {
     return await databases.getDocument(DATABASE_ID, COLLECTIONS.SFTP_ACCOUNTS, accountId)
@@ -73,85 +34,30 @@ async function getAccountSettings(accountId: string) {
   }
 }
 
-function shouldIgnorePath(path: string, ignoredPatterns: string[]): boolean {
-  const normalizedPath = path.toLowerCase()
-  return ignoredPatterns.some(pattern => {
-    const p = pattern.toLowerCase().trim()
-    return p && normalizedPath.includes(p)
-  })
-}
-
-// Scan for files modified after startTime
-async function findChangedFiles(
-  sftp: Client,
-  basePath: string,
-  startTime: number,
-  ignoredPatterns: string[],
-  loggedPaths: Set<string>
-): Promise<Array<{ path: string; size: number; mtime: number }>> {
-  const changes: Array<{ path: string; size: number; mtime: number }> = []
-  
-  async function scanDir(dirPath: string, depth: number): Promise<void> {
-    if (depth > 5 || changes.length >= 50) return
-    if (shouldIgnorePath(dirPath, ignoredPatterns)) return
-
-    try {
-      const listing = await sftp.list(dirPath)
-      
-      for (const item of listing) {
-        const fullPath = dirPath === '/' ? `/${item.name}` : `${dirPath}/${item.name}`
-        
-        if (shouldIgnorePath(fullPath, ignoredPatterns)) continue
-
-        if (item.type === '-') {
-          // File - modifyTime could be in seconds or milliseconds depending on server
-          // If it looks like seconds (< year 2100 in ms), convert to ms
-          const rawMtime = item.modifyTime
-          const mtimeMs = rawMtime < 4102444800000 ? rawMtime * 1000 : rawMtime
-          
-          // Only include if modified AFTER monitoring started AND not already logged
-          if (mtimeMs > startTime && !loggedPaths.has(fullPath)) {
-            changes.push({ path: fullPath, size: item.size, mtime: mtimeMs })
-          }
-        } else if (item.type === 'd') {
-          await scanDir(fullPath, depth + 1)
-        }
-      }
-    } catch {
-      // Skip inaccessible directories
-    }
-  }
-
-  await scanDir(basePath, 0)
-  return changes
-}
-
-async function logChanges(accountId: string, changes: Array<{ path: string; size: number }>) {
-  const now = new Date().toISOString()
-  
-  // Log in parallel for speed
-  await Promise.all(changes.map(change => 
-    databases.createDocument(
+async function logChange(accountId: string, filePath: string, changeType: 'added' | 'modified' | 'deleted', size?: number) {
+  try {
+    await databases.createDocument(
       DATABASE_ID,
       COLLECTIONS.CHANGE_LOGS,
       ID.unique(),
       {
         account_id: accountId,
-        file_path: change.path,
-        change_type: 'modified',
-        detected_at: now,
-        new_size: change.size,
+        file_path: filePath,
+        change_type: changeType,
+        detected_at: new Date().toISOString(),
+        new_size: size || 0,
       }
-    ).catch(err => console.error('Failed to log:', err))
-  ))
+    )
+    console.log(`[v0] Logged ${changeType}: ${filePath}`)
+  } catch (error) {
+    console.error(`[v0] Failed to log change:`, error)
+  }
 }
 
 export async function POST(request: NextRequest) {
   if (!checkRateLimit()) {
     return NextResponse.json({ success: true, message: 'Rate limited', rateLimited: true })
   }
-
-  const sftp = new Client()
 
   try {
     const body = await request.json()
@@ -163,109 +69,110 @@ export async function POST(request: NextRequest) {
 
     // STOP monitoring
     if (action === 'stop') {
-      await deleteSession(account_id)
+      const existing = activeWatchers.get(account_id)
+      if (existing) {
+        existing.watcher.emit('stop')
+        activeWatchers.delete(account_id)
+        console.log(`[v0] Stopped monitoring for account ${account_id}`)
+      }
       return NextResponse.json({ success: true, message: 'Monitoring stopped' })
     }
 
-    // INITIALIZE: Start monitoring (just record timestamp, no scanning)
+    // START monitoring
     if (action === 'initialize') {
+      // Stop existing watcher if any
+      const existing = activeWatchers.get(account_id)
+      if (existing) {
+        existing.watcher.emit('stop')
+        activeWatchers.delete(account_id)
+      }
+
       const account = await getAccountSettings(account_id)
       if (!account) {
         return NextResponse.json({ success: false, message: 'Account not found' }, { status: 404 })
       }
 
-      // Test connection only
       try {
-        await sftp.connect({
+        const watcher = new SftpWatcher({
           host: account.sftp_host,
           port: account.sftp_port || 22,
           username: account.sftp_username,
           password: account.sftp_password,
-          readyTimeout: 10000,
+          path: account.base_path || '/',
+          interval: 30000, // Check every 30 seconds
         })
-        await sftp.end()
+
+        // Handle file upload (new or modified)
+        watcher.on('upload', async (data: { filename: string; filepath: string; size?: number }) => {
+          console.log(`[v0] File uploaded: ${data.filepath}`)
+          await logChange(account_id, data.filepath, 'added', data.size)
+        })
+
+        // Handle file delete
+        watcher.on('delete', async (data: { filename: string; filepath: string }) => {
+          console.log(`[v0] File deleted: ${data.filepath}`)
+          await logChange(account_id, data.filepath, 'deleted')
+        })
+
+        // Handle errors
+        watcher.on('error', (error: Error) => {
+          console.error(`[v0] Watcher error:`, error.message)
+        })
+
+        activeWatchers.set(account_id, {
+          watcher,
+          startedAt: Date.now(),
+          accountId: account_id,
+        })
+
+        console.log(`[v0] Started monitoring for account ${account_id} at ${account.base_path || '/'}`)
+
+        return NextResponse.json({
+          success: true,
+          message: 'Monitoring started. Changes will be detected automatically.',
+          startedAt: Date.now(),
+        })
       } catch (err) {
-        return NextResponse.json({ 
-          success: false, 
-          message: err instanceof Error ? err.message : 'Connection failed' 
+        return NextResponse.json({
+          success: false,
+          message: err instanceof Error ? err.message : 'Failed to start monitoring',
         }, { status: 500 })
       }
+    }
 
-      // Start session in database - record current time as baseline
-      const now = Date.now()
-      await saveSession(account_id, now, now, [])
-
+    // STATUS check
+    const existing = activeWatchers.get(account_id)
+    if (existing) {
       return NextResponse.json({
         success: true,
-        message: 'Monitoring started. Only changes from now will be detected.',
+        isMonitoring: true,
+        startedAt: existing.startedAt,
+        message: 'Monitoring active',
       })
     }
-
-    // SCAN: Check for changes since startTime
-    const session = await getSession(account_id)
-    if (!session) {
-      return NextResponse.json({ 
-        success: false, 
-        needsInitialize: true,
-        message: 'Not monitoring' 
-      })
-    }
-
-    // Don't scan too frequently
-    const now = Date.now()
-    if (now - session.last_scan_time < 5000) {
-      return NextResponse.json({ success: true, message: 'Waiting...', changesDetected: 0 })
-    }
-
-    const account = await getAccountSettings(account_id)
-    if (!account) {
-      return NextResponse.json({ success: false, message: 'Account not found' }, { status: 404 })
-    }
-
-    await sftp.connect({
-      host: account.sftp_host,
-      port: account.sftp_port || 22,
-      username: account.sftp_username,
-      password: account.sftp_password,
-      readyTimeout: 15000,
-    })
-
-    const ignoredPatterns = account.ignored_folders
-      ? account.ignored_folders.split(',').map((s: string) => s.trim())
-      : []
-
-    const loggedPaths = new Set<string>(JSON.parse(session.logged_paths || '[]'))
-
-    const changes = await findChangedFiles(
-      sftp,
-      account.base_path || '/',
-      session.start_time,
-      ignoredPatterns,
-      loggedPaths
-    )
-
-    await sftp.end()
-
-    // Log changes and update session
-    if (changes.length > 0) {
-      await logChanges(account_id, changes)
-      changes.forEach(c => loggedPaths.add(c.path))
-    }
-
-    // Update session in database
-    await saveSession(account_id, session.start_time, now, Array.from(loggedPaths))
 
     return NextResponse.json({
-      success: true,
-      changesDetected: changes.length,
-      message: changes.length > 0 ? `${changes.length} change(s) detected` : 'No changes'
+      success: false,
+      isMonitoring: false,
+      needsInitialize: true,
+      message: 'Not monitoring',
     })
 
-  } catch (error) {
-    try { await sftp.end() } catch {}
-    return NextResponse.json({ 
-      success: false, 
-      message: error instanceof Error ? error.message : 'Scan failed' 
-    }, { status: 500 })
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ success: false, message }, { status: 500 })
   }
 }
+
+// Cleanup old watchers after 2 hours
+setInterval(() => {
+  const maxAge = 2 * 60 * 60 * 1000
+  const now = Date.now()
+  for (const [key, instance] of activeWatchers) {
+    if (now - instance.startedAt > maxAge) {
+      instance.watcher.emit('stop')
+      activeWatchers.delete(key)
+      console.log(`[v0] Auto-stopped old watcher for ${key}`)
+    }
+  }
+}, 30 * 60 * 1000)
