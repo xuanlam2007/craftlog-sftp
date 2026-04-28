@@ -172,7 +172,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
 
           {/* File Browser */}
           {showBrowser && (
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-hidden max-w-full">
               {/* Browser Header */}
               <div className="flex items-center gap-2 px-3 py-2 bg-muted border-b">
                 <Button
@@ -198,7 +198,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
               </div>
               
               {/* File List */}
-              <div className="max-h-64 overflow-y-auto">
+              <div className="max-h-64 overflow-y-auto overflow-x-hidden">
                 {isLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -214,7 +214,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
                         key={item.path}
                         onClick={() => handleSelectItem(item)}
                         className={cn(
-                          "w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/50 transition-colors",
+                          "w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/50 transition-colors min-w-0",
                           item.type === 'file' && "hover:bg-primary/5"
                         )}
                       >
@@ -223,7 +223,7 @@ export function CreateLogDialog({ accountId, onLogCreated }: CreateLogDialogProp
                         ) : (
                           <File className="h-4 w-4 text-muted-foreground shrink-0" />
                         )}
-                        <span className="text-sm truncate flex-1">{item.name}</span>
+                        <span className="text-sm truncate flex-1 min-w-0">{item.name}</span>
                         {item.type === 'folder' && (
                           <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                         )}
