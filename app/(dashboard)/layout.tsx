@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
 import { SftpProvider, useSftp } from '@/lib/sftp-context'
-import { FileText, Files, Settings, Activity, LogOut, Loader2, Server, ChevronDown, Check } from 'lucide-react'
+import { FileText, Settings, Activity, LogOut, Loader2, Server, ChevronDown, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -19,7 +19,6 @@ import {
 
 const navigation = [
   { name: 'Logs', href: '/', icon: FileText },
-  { name: 'All Changed Files', href: '/changed-files', icon: Files },
   { name: 'SFTP Accounts', href: '/accounts', icon: Server },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]

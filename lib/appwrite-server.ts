@@ -47,12 +47,7 @@ export { ID, Query }
 // Database and Collection IDs
 export const DATABASE_ID = 'sftp_monitor'
 export const COLLECTIONS = {
-  SNAPSHOTS: 'snapshots',
-  FILE_RECORDS: 'file_records',
   CHANGE_LOGS: 'change_logs',
-  CHANGED_FILES: 'changed_files',
-  SETTINGS: 'settings',
-  // New collections for multi-user support
   SFTP_ACCOUNTS: 'sftp_accounts',
   ACCOUNT_MEMBERS: 'account_members',
   USER_PREFERENCES: 'user_preferences',

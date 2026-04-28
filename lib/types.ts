@@ -29,57 +29,11 @@ export interface UserPreferences {
   last_account_id?: string
 }
 
-export interface FileRecord {
-  $id?: string
-  account_id: string // Link to SFTP account
-  snapshot_id: string
-  path: string
-  size: number
-  modified_time: string
-}
-
-export interface Snapshot {
-  $id?: string
-  $createdAt?: string
-  account_id: string // Link to SFTP account
-}
-
+// Change Log - manually created log entries
 export interface ChangeLog {
   $id?: string
-  account_id: string // Link to SFTP account
+  account_id: string
   file_path: string
   change_type: 'added' | 'modified' | 'deleted'
   detected_at: string
-  old_size?: number
-  new_size?: number
-  old_modified?: string
-  new_modified?: string
-}
-
-export interface ChangedFile {
-  $id?: string
-  account_id: string // Link to SFTP account
-  file_path: string
-  first_detected: string
-  last_detected: string
-  change_count: number
-}
-
-// Legacy - keeping for backwards compatibility but will be replaced by SftpAccount
-export interface SftpSettings {
-  $id?: string
-  sftp_host: string
-  sftp_port: number
-  sftp_username: string
-  sftp_password: string
-  base_path: string
-  ignored_folders?: string
-}
-
-export interface ScanResult {
-  success: boolean
-  message: string
-  snapshotId?: string
-  isBaseline?: boolean
-  changesDetected?: number
 }
